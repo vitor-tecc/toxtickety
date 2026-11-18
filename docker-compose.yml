@@ -1,0 +1,15 @@
+services:
+  toxtickety:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_PATH: /data/toxtickety.db
+      DASHBOARD_HOST: 0.0.0.0
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - toxtickety-data:/data
+
+volumes:
+  toxtickety-data:
