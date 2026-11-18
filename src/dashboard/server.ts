@@ -19,6 +19,7 @@ import type { Env } from '../env.js';
 const SESSION_COOKIE = 'toxtickety_session';
 const STATE_COOKIE = 'toxtickety_oauth';
 const SESSION_MS = 7 * 86_400_000;
+const INSECURE_SESSION_MS = 12 * 3_600_000;
 const DISCORD_API = 'https://discord.com/api/v10';
 
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
@@ -64,6 +65,8 @@ export function createDashboardApp(bot: Bot, options: DashboardOptions) {
   const app = express();
   const origin = new URL(options.publicUrl).origin;
   const secure = options.publicUrl.startsWith('https://');
+  // Without HTTPS a sign-in could be intercepted, so sessions on plain HTTP end much sooner.
+  const sessionMs = secure ? SESSION_MS : INSECURE_SESSION_MS;
   const cookie = (maxAge: number, sameSite: 'lax' = 'lax') => ({
     httpOnly: true,
     sameSite,
@@ -133,9 +136,9 @@ export function createDashboardApp(bot: Bot, options: DashboardOptions) {
         userId: user.id,
         username: user.username,
         avatar: user.avatar,
-        expiresAt: Date.now() + SESSION_MS,
+        expiresAt: Date.now() + sessionMs,
       });
-      res.cookie(SESSION_COOKIE, sessionToken, cookie(SESSION_MS));
+      res.cookie(SESSION_COOKIE, sessionToken, cookie(sessionMs));
       res.redirect('/');
     } catch (error) {
       console.error('[dashboard] login failed:', error);
@@ -331,16 +334,16 @@ export function createDashboardApp(bot: Bot, options: DashboardOptions) {
     res.json({ ok: true });
   });
 
-  api.get('/guilds/:guildId/stats', guildAccess, (_req, res: ScopedResponse) => {
+  api.get('/guilds/:guildId/stats', guildAccess, async (_req, res: ScopedResponse) => {
     const { guild } = res.locals.scope;
     const stats = store.stats(guild.id);
-    res.json({
-      ...stats,
-      claimed: stats.claimed.map((row) => ({
-        ...row,
-        name: client.users.cache.get(row.userId)?.username ?? row.userId,
-      })),
-    });
+    const claimed = await Promise.all(
+      stats.claimed.map(async (row) => {
+        const user = await client.users.fetch(row.userId).catch(() => null);
+        return { ...row, name: user?.username ?? row.userId };
+      }),
+    );
+    res.json({ ...stats, claimed });
   });
 
   api.get('/guilds/:guildId/history', guildAccess, (_req, res: ScopedResponse) => {
@@ -408,6 +411,10 @@ export function startDashboard(bot: Bot, env: Env): Server | undefined {
     return undefined;
   }
   const app = createDashboardApp(bot, { publicUrl: env.DASHBOARD_URL, clientSecret: env.DISCORD_CLIENT_SECRET });
+  const { protocol, hostname } = new URL(env.DASHBOARD_URL);
+  if (protocol === 'http:' && hostname !== 'localhost' && hostname !== '127.0.0.1') {
+    console.warn('[dashboard] DASHBOARD_URL uses plain HTTP. Sign-ins are not encrypted, so avoid public networks.');
+  }
   return app.listen(env.DASHBOARD_PORT, env.DASHBOARD_HOST, () => {
     console.log(`[dashboard] listening on ${env.DASHBOARD_HOST}:${env.DASHBOARD_PORT}, public URL ${env.DASHBOARD_URL}`);
   });

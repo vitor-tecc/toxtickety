@@ -1035,7 +1035,11 @@ export class TicketService {
 
   // Transcripts ----------------------------------------------------------------------------------
 
-  private async collectMessages(channel: TicketChannel, max: number): Promise<TranscriptMessage[]> {
+  private async collectMessages(
+    channel: TicketChannel,
+    max: number,
+    names: Map<string, string>,
+  ): Promise<TranscriptMessage[]> {
     const collected: Message[] = [];
     let before: string | undefined;
     while (collected.length < max) {
@@ -1044,6 +1048,10 @@ export class TicketService {
       collected.push(...batch.values());
       before = batch.last()?.id;
       if (batch.size < 100) break;
+    }
+    for (const message of collected) {
+      names.set(message.author.id, message.member?.displayName ?? message.author.displayName);
+      for (const user of message.mentions.users.values()) names.set(user.id, user.displayName);
     }
     return collected.reverse().map((message) => ({
       id: message.id,
@@ -1077,7 +1085,8 @@ export class TicketService {
   private async buildTranscript(ticket: Ticket, panel: Panel, channel: TicketChannel, lines?: number) {
     const guild = channel.guild;
     const max = Math.min(lines ?? panel.config.transcript.maxMessages, panel.config.transcript.maxMessages);
-    const messages = await this.collectMessages(channel, max);
+    const names = new Map<string, string>();
+    const messages = await this.collectMessages(channel, max, names);
     const owner = await this.ownerOf(guild, ticket.ownerId);
     const html = renderTranscript(messages, {
       serverName: guild.name,
@@ -1086,7 +1095,7 @@ export class TicketService {
       ownerName: owner ? this.person(owner).name : ticket.ownerId,
       ownerId: ticket.ownerId,
       generatedAt: Date.now(),
-      resolveUser: (id) => guild.members.cache.get(id)?.displayName ?? this.client.users.cache.get(id)?.username,
+      resolveUser: (id) => names.get(id) ?? guild.members.cache.get(id)?.displayName,
       resolveRole: (id) => guild.roles.cache.get(id)?.name,
       resolveChannel: (id) => guild.channels.cache.get(id)?.name,
     });

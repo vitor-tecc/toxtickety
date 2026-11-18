@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import Database from 'better-sqlite3';
 import { parseGuild, parsePanel, type GuildConfig, type PanelConfig } from '../config/schema.js';
+import { SqliteDatabase } from './sqlite.js';
 
 export type TicketState = 'creating' | 'open' | 'closed' | 'deleting' | 'deleted';
 
@@ -260,23 +260,22 @@ const TICKET_COLUMNS = {
 export type TicketPatch = Partial<{ [K in keyof typeof TICKET_COLUMNS]: Ticket[K] }>;
 
 export class Store {
-  readonly db: Database.Database;
+  readonly db: SqliteDatabase;
   private readonly guildCache = new Map<string, GuildConfig>();
 
   constructor(path: string) {
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
-    this.db = new Database(path);
-    this.db.pragma('journal_mode = WAL');
-    this.db.pragma('foreign_keys = ON');
+    this.db = new SqliteDatabase(path);
+    this.db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
     this.migrate();
   }
 
   private migrate(): void {
-    const version = this.db.pragma('user_version', { simple: true }) as number;
+    const { user_version: version } = this.db.prepare('PRAGMA user_version').get() as { user_version: number };
     for (let index = version; index < MIGRATIONS.length; index += 1) {
       this.db.transaction(() => {
         this.db.exec(MIGRATIONS[index]!);
-        this.db.pragma(`user_version = ${index + 1}`);
+        this.db.exec(`PRAGMA user_version = ${index + 1}`);
       })();
     }
   }

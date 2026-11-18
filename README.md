@@ -6,7 +6,7 @@ For example, to get channels named `complaint-0001`, open a panel in the dashboa
 
 ## Set up
 
-You need [Node.js 22 or newer](https://nodejs.org) or Docker.
+To host it on Kerit Cloud or another panel host, follow [HOSTING.md](HOSTING.md). To run it on your own machine, you need [Node.js 22.13 or newer](https://nodejs.org) or Docker.
 
 ### 1. Create the Discord application
 
