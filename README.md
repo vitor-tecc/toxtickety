@@ -78,3 +78,11 @@ Members can now press the button to open `complaint-0001`, `complaint-0002` and 
 | Welcome message | `{user}` `{support}` `{count}` `{panel}` `{server}` `{ticket}` |
 
 Using `{support}` in the welcome message pings the panel's support roles.
+
+## Language
+
+Everything members see is in Brazilian Portuguese. Setup commands and messages for moderators are in English.
+
+## Text under the bot's name
+
+Set `BOT_STATUS` in `.env`, then restart the bot. Leave it empty to show nothing.

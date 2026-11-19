@@ -70,12 +70,12 @@ def _message(item: dict) -> str:
 
 def render_transcript(channel: str, server: str, owner: str, messages: list[dict]) -> str:
     saved = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    summary = f"{server}, opened by {owner}. {len(messages)} messages, saved {saved}."
+    summary = f"{server}, aberto por {owner}. {len(messages)} mensagens, salvo em {saved}."
     return (
-        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+        '<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
         "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; img-src https: http:; style-src 'unsafe-inline'\">"
-        f"<title>{escape(channel)} transcript</title><style>{STYLE}</style></head><body>"
+        f"<title>Transcrição de {escape(channel)}</title><style>{STYLE}</style></head><body>"
         f'<header class="top"><h1>#{escape(channel)}</h1><p>{escape(summary)}</p></header>'
         f'<main>{"".join(_message(item) for item in messages)}</main></body></html>'
     )

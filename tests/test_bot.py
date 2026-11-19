@@ -174,6 +174,13 @@ class DatabaseTests(unittest.TestCase):
         self.assertTrue(db.set_state(ticket["id"], ("open",), "closed"))
         self.assertFalse(db.set_state(ticket["id"], ("open",), "closed"))
 
+    def test_old_english_defaults_become_portuguese(self):
+        db = Database(":memory:")
+        panel = db.create_panel(GUILD_ID, "Help", button_label="Open ticket", panel_title="My own title")
+        saved = db.get_panel(panel["id"])
+        self.assertEqual(saved["button_label"], "Abrir ticket")
+        self.assertEqual(saved["panel_title"], "My own title")
+
     def test_settings_survive_saving(self):
         db = Database(":memory:")
         panel = db.create_panel(GUILD_ID, "Help")
@@ -219,7 +226,7 @@ class LifecycleTests(Base):
         self.guild.create_error = discord.RateLimited(85864)
         with self.assertRaises(bot.UserError) as caught:
             await bot.open_ticket(self.guild, self.panel, self.owner)
-        self.assertIn("24 hours", str(caught.exception))
+        self.assertIn("24 horas", str(caught.exception))
         self.assertEqual(bot.db.get_panel(self.panel["id"])["counter"], 0)
         self.guild.create_error = None
         ticket = await bot.open_ticket(self.guild, self.panel, self.owner)
@@ -244,7 +251,7 @@ class LifecycleTests(Base):
         await bot.close_ticket(channel, ticket, self.panel, self.staff)
         closed = self.fresh(ticket)
         self.assertEqual(closed["state"], "closed")
-        self.assertEqual(channel.name, "closed-0001")
+        self.assertEqual(channel.name, "fechado-0001")
         self.assertFalse(channel.overwrites[self.owner].view_channel)
         with self.assertRaises(bot.UserError):
             await bot.close_ticket(channel, closed, self.panel, self.staff)

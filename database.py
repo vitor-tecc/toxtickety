@@ -9,7 +9,7 @@ import time
 
 DEFAULT_SETTINGS = {
     "ticket_name": "ticket-{count}",
-    "closed_name": "closed-{count}",
+    "closed_name": "fechado-{count}",
     "padding": 4,
     "support_roles": [],
     "open_category": None,
@@ -21,13 +21,24 @@ DEFAULT_SETTINGS = {
     "confirm_close": True,
     "keep_closed": True,
     "dm_transcript": False,
-    "button_label": "Open ticket",
+    "button_label": "Abrir ticket",
     "button_emoji": "📩",
     "button_color": "blue",
+    "panel_title": "Abrir um ticket",
+    "panel_text": "Clique no botão abaixo e nossa equipe vai te ajudar.",
+    "welcome_text": "{user} Obrigado por entrar em contato! Nossa equipe vai te atender em breve.",
+    "questions": [],
+}
+
+
+# Earlier English defaults. Panels that still use them switch to the Portuguese ones above,
+# while anything a moderator wrote stays as written.
+OLD_DEFAULTS = {
+    "closed_name": "closed-{count}",
+    "button_label": "Open ticket",
     "panel_title": "Open a ticket",
     "panel_text": "Press the button below and our team will help you.",
     "welcome_text": "{user} Thanks for reaching out. Our team will be with you shortly.",
-    "questions": [],
 }
 
 
@@ -80,6 +91,9 @@ class Database:
         if row is None:
             return None
         settings = {**DEFAULT_SETTINGS, **json.loads(row["settings"])}
+        for key, old in OLD_DEFAULTS.items():
+            if settings[key] == old:
+                settings[key] = DEFAULT_SETTINGS[key]
         return {**settings, "id": row["id"], "guild_id": row["guild_id"], "name": row["name"], "counter": row["counter"]}
 
     def create_panel(self, guild_id: int, name: str, **settings) -> dict:

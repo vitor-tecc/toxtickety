@@ -89,15 +89,15 @@ patch_ratelimit()
 def wait_text(seconds: float) -> str:
     if seconds >= 3600:
         hours = round(seconds / 3600)
-        return f"about {hours} hour{'s' if hours != 1 else ''}"
+        return f"cerca de {hours} hora{'s' if hours != 1 else ''}"
     minutes = max(1, round(seconds / 60))
-    return f"about {minutes} minute{'s' if minutes != 1 else ''}"
+    return f"cerca de {minutes} minuto{'s' if minutes != 1 else ''}"
 
 
 def rate_limit_message(error: discord.RateLimited, action: str) -> str:
     return (
-        f"Discord is temporarily blocking me from {action} on this server. "
-        f"Please try again in {wait_text(error.retry_after)}."
+        f"O Discord está me impedindo temporariamente de {action} neste servidor. "
+        f"Tente de novo em {wait_text(error.retry_after)}."
     )
 
 
@@ -146,7 +146,7 @@ def is_support(member: discord.Member, panel: dict) -> bool:
 
 def require_support(member: discord.Member, panel: dict) -> None:
     if not is_support(member, panel):
-        raise UserError("Only the support team can do that.")
+        raise UserError("Só a equipe de suporte pode fazer isso.")
 
 
 def held(guild: discord.Guild, **permissions) -> discord.PermissionOverwrite:
@@ -277,7 +277,7 @@ async def build_transcript(channel: discord.TextChannel, ticket: dict) -> bytes:
 
 
 def transcript_file(channel: discord.TextChannel, data: bytes) -> discord.File:
-    return discord.File(io.BytesIO(data), filename=f"{channel.name}-transcript.html")
+    return discord.File(io.BytesIO(data), filename=f"{channel.name}-transcricao.html")
 
 
 async def save_transcript(channel: discord.TextChannel, panel: dict, ticket: dict, data: bytes | None = None) -> bool:
@@ -298,7 +298,7 @@ async def dm_transcript(channel: discord.TextChannel, ticket: dict, data: bytes)
     if owner is None:
         return
     try:
-        await owner.send(f"Here is the transcript of your ticket in **{channel.guild.name}**.", file=transcript_file(channel, data))
+        await owner.send(f"Aqui está a transcrição do seu ticket em **{channel.guild.name}**.", file=transcript_file(channel, data))
     except DISCORD_ERRORS:
         log.info("Could not DM a transcript to %s", ticket["owner_id"])
 
@@ -309,14 +309,14 @@ async def dm_transcript(channel: discord.TextChannel, ticket: dict, data: bytes)
 def panel_of(ticket: dict) -> dict:
     panel = db.get_panel(ticket["panel_id"])
     if panel is None:
-        raise UserError("The panel for this ticket no longer exists.")
+        raise UserError("O painel deste ticket não existe mais.")
     return panel
 
 
 def current_ticket(interaction: discord.Interaction) -> tuple[dict, dict]:
     ticket = db.ticket_by_channel(interaction.channel_id)
     if ticket is None:
-        raise UserError("Use this inside a ticket.")
+        raise UserError("Use isso dentro de um ticket.")
     return ticket, panel_of(ticket)
 
 
@@ -324,7 +324,7 @@ async def open_ticket(guild: discord.Guild, panel: dict, owner: discord.Member, 
     try:
         ticket = db.reserve_ticket(panel, owner.id)
     except LimitReached:
-        raise UserError("You already have the maximum number of open tickets here.") from None
+        raise UserError("Você já tem o número máximo de tickets abertos aqui.") from None
 
     try:
         channel = await guild.create_text_channel(
@@ -336,12 +336,12 @@ async def open_ticket(guild: discord.Guild, panel: dict, owner: discord.Member, 
     except discord.RateLimited as error:
         db.release_ticket(ticket["id"])
         log.warning("Discord is limiting channel creation for %.0f seconds", error.retry_after)
-        raise UserError(rate_limit_message(error, "creating new ticket channels")) from error
+        raise UserError(rate_limit_message(error, "criar novos tickets")) from error
     except Exception as error:
         db.release_ticket(ticket["id"])
         log.warning("Could not create a ticket channel: %s", error)
         if isinstance(error, discord.HTTPException):
-            raise UserError("I couldn't create the ticket. Check that I have Manage Channels and Manage Roles.") from error
+            raise UserError("Não consegui criar o ticket. Avise a equipe da moderação.") from error
         raise
 
     ticket = db.activate_ticket(ticket["id"], channel.id)
@@ -356,9 +356,9 @@ async def open_ticket(guild: discord.Guild, panel: dict, owner: discord.Member, 
         allowed_mentions=discord.AllowedMentions(users=True, roles=True, everyone=False),
     )
     if answers:
-        form = discord.Embed(title="Answers", color=BRAND_COLOR)
+        form = discord.Embed(title="Respostas", color=BRAND_COLOR)
         for question, answer in answers:
-            form.add_field(name=question, value=(answer or "No answer")[:1024], inline=False)
+            form.add_field(name=question, value=(answer or "Sem resposta")[:1024], inline=False)
         await channel.send(embed=form, allowed_mentions=discord.AllowedMentions.none())
     await write_log(guild, panel, ticket, "Ticket opened", owner, discord.Color.green())
     return ticket
@@ -369,7 +369,7 @@ async def close_ticket(channel: discord.TextChannel, ticket: dict, panel: dict, 
         await delete_ticket(channel, ticket, panel, actor)
         return
     if not db.set_state(ticket["id"], ("open",), "closed"):
-        raise UserError("This ticket is already closed.")
+        raise UserError("Este ticket já está fechado.")
 
     fields = {"overwrites": await ticket_overwrites(channel.guild, panel, ticket, closed=True)}
     category = usable_category(channel.guild, panel["closed_category"])
@@ -380,11 +380,11 @@ async def close_ticket(channel: discord.TextChannel, ticket: dict, panel: dict, 
     except DISCORD_ERRORS as error:
         db.set_state(ticket["id"], ("closed",), "open")
         if isinstance(error, discord.RateLimited):
-            raise UserError(rate_limit_message(error, "editing this channel")) from error
+            raise UserError(rate_limit_message(error, "editar este canal")) from error
         raise UserError("I couldn't close this ticket. Check my channel permissions.") from error
 
     control = await channel.send(
-        embed=discord.Embed(description=f"Ticket closed by {actor.mention}.", color=discord.Color.orange()),
+        embed=discord.Embed(description=f"Ticket fechado por {actor.mention}.", color=discord.Color.orange()),
         view=ClosedView(),
         allowed_mentions=discord.AllowedMentions.none(),
     )
@@ -418,7 +418,7 @@ async def reopen_ticket(channel: discord.TextChannel, ticket: dict, panel: dict,
             pass
         db.set_control_message(ticket["id"], None)
     await channel.send(
-        embed=discord.Embed(description=f"Ticket reopened by {actor.mention}.", color=discord.Color.green()),
+        embed=discord.Embed(description=f"Ticket reaberto por {actor.mention}.", color=discord.Color.green()),
         allowed_mentions=discord.AllowedMentions.none(),
     )
     await write_log(channel.guild, panel, ticket, "Ticket reopened", actor, discord.Color.green())
@@ -430,7 +430,7 @@ async def delete_ticket(channel: discord.TextChannel, ticket: dict, panel: dict,
         raise UserError("This ticket is already being deleted.")
 
     try:
-        await channel.send(embed=discord.Embed(description="This ticket will be deleted in a few seconds.", color=discord.Color.red()))
+        await channel.send(embed=discord.Embed(description="Este ticket será apagado em alguns segundos.", color=discord.Color.red()))
         data = await build_transcript(channel, ticket)
         await save_transcript(channel, panel, ticket, data)
         if panel["dm_transcript"] and previous == "open":
@@ -447,7 +447,7 @@ async def delete_ticket(channel: discord.TextChannel, ticket: dict, panel: dict,
     except DISCORD_ERRORS as error:
         db.set_state(ticket["id"], ("deleting",), previous)
         if isinstance(error, discord.RateLimited):
-            raise UserError(rate_limit_message(error, "deleting channels")) from error
+            raise UserError(rate_limit_message(error, "apagar canais")) from error
         raise UserError("I couldn't delete this channel. Check my permissions.") from error
     db.set_state(ticket["id"], ("deleting",), "deleted")
 
@@ -461,7 +461,7 @@ async def toggle_claim(channel: discord.TextChannel, ticket: dict, panel: dict, 
         raise UserError(f"This ticket is already claimed by <@{ticket['claimed_by']}>.")
     claiming = ticket["claimed_by"] is None
     db.set_claimed(ticket["id"], actor.id if claiming else None)
-    text = f"{actor.mention} will handle this ticket." if claiming else f"{actor.mention} released this ticket."
+    text = f"{actor.mention} vai cuidar deste ticket." if claiming else f"{actor.mention} deixou de cuidar deste ticket."
     await channel.send(embed=discord.Embed(description=text, color=BRAND_COLOR), allowed_mentions=discord.AllowedMentions.none())
     await write_log(channel.guild, panel, ticket, "Ticket claimed" if claiming else "Ticket released", actor, BRAND_COLOR)
     return "Ticket claimed." if claiming else "Ticket released."
@@ -475,12 +475,12 @@ async def report_error(interaction: discord.Interaction, error: Exception) -> No
     if isinstance(original, UserError):
         text = str(original)
     elif isinstance(original, discord.RateLimited):
-        text = rate_limit_message(original, "doing that")
+        text = rate_limit_message(original, "fazer isso")
     elif isinstance(original, discord.Forbidden):
         text = "I'm missing a permission for that. Check my role and channel permissions."
     else:
         log.error("Unexpected error", exc_info=original)
-        text = "Something went wrong. Please try again."
+        text = "Algo deu errado. Tente de novo."
     try:
         if interaction.response.is_done():
             await interaction.followup.send(text, ephemeral=True)
@@ -510,15 +510,15 @@ class ConfirmClose(BaseView):
     def __init__(self):
         super().__init__(timeout=60)
 
-    @discord.ui.button(label="Close ticket", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label="Fechar ticket", style=discord.ButtonStyle.danger)
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
         ticket, panel = current_ticket(interaction)
-        await interaction.response.edit_message(content="Closing this ticket.", view=None)
+        await interaction.response.edit_message(content="Fechando este ticket.", view=None)
         await close_ticket(interaction.channel, ticket, panel, interaction.user)
 
-    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="Cancelar", style=discord.ButtonStyle.secondary)
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.edit_message(content="The ticket stays open.", view=None)
+        await interaction.response.edit_message(content="O ticket continua aberto.", view=None)
 
 
 class TicketView(BaseView):
@@ -527,7 +527,7 @@ class TicketView(BaseView):
         if not claiming:
             self.remove_item(self.claim_button)
 
-    @discord.ui.button(label="Close", emoji="🔒", style=discord.ButtonStyle.secondary, custom_id="toxtickety:close")
+    @discord.ui.button(label="Fechar", emoji="🔒", style=discord.ButtonStyle.secondary, custom_id="toxtickety:close")
     async def close_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         ticket, panel = current_ticket(interaction)
         if ticket["state"] != "open":
@@ -535,12 +535,12 @@ class TicketView(BaseView):
         if interaction.user.id != ticket["owner_id"]:
             require_support(interaction.user, panel)
         if panel["confirm_close"]:
-            await interaction.response.send_message("Close this ticket?", view=ConfirmClose(), ephemeral=True)
+            await interaction.response.send_message("Fechar este ticket?", view=ConfirmClose(), ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True)
         await close_ticket(interaction.channel, ticket, panel, interaction.user)
 
-    @discord.ui.button(label="Claim", emoji="🙋", style=discord.ButtonStyle.success, custom_id="toxtickety:claim")
+    @discord.ui.button(label="Assumir", emoji="🙋", style=discord.ButtonStyle.success, custom_id="toxtickety:claim")
     async def claim_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         ticket, panel = current_ticket(interaction)
         require_support(interaction.user, panel)
@@ -552,14 +552,14 @@ class ClosedView(BaseView):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="Transcript", emoji="📑", style=discord.ButtonStyle.secondary, custom_id="toxtickety:transcript")
+    @discord.ui.button(label="Transcrição", emoji="📑", style=discord.ButtonStyle.secondary, custom_id="toxtickety:transcript")
     async def transcript_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         ticket, panel = current_ticket(interaction)
         require_support(interaction.user, panel)
         await interaction.response.defer(ephemeral=True)
         await send_transcript(interaction, ticket, panel)
 
-    @discord.ui.button(label="Reopen", emoji="🔓", style=discord.ButtonStyle.secondary, custom_id="toxtickety:reopen")
+    @discord.ui.button(label="Reabrir", emoji="🔓", style=discord.ButtonStyle.secondary, custom_id="toxtickety:reopen")
     async def reopen_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         ticket, panel = current_ticket(interaction)
         require_support(interaction.user, panel)
@@ -567,7 +567,7 @@ class ClosedView(BaseView):
         await reopen_ticket(interaction.channel, ticket, panel, interaction.user)
         await reply(interaction, "Ticket reopened.")
 
-    @discord.ui.button(label="Delete", emoji="⛔", style=discord.ButtonStyle.danger, custom_id="toxtickety:delete")
+    @discord.ui.button(label="Apagar", emoji="⛔", style=discord.ButtonStyle.danger, custom_id="toxtickety:delete")
     async def delete_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         ticket, panel = current_ticket(interaction)
         require_support(interaction.user, panel)
@@ -603,7 +603,7 @@ class QuestionForm(discord.ui.Modal):
         await interaction.response.defer(ephemeral=True)
         answers = [(field.label, field.value) for field in self.inputs]
         ticket = await open_ticket(interaction.guild, self.panel, interaction.user, answers)
-        await reply(interaction, f"Your ticket is ready: <#{ticket['channel_id']}>")
+        await reply(interaction, f"Seu ticket foi criado: <#{ticket['channel_id']}>")
 
     async def on_error(self, interaction: discord.Interaction, error: Exception) -> None:
         await report_error(interaction, error)
@@ -612,7 +612,7 @@ class QuestionForm(discord.ui.Modal):
 class OpenTicketButton(discord.ui.DynamicItem[discord.ui.Button], template=r"toxtickety:open:(?P<id>\d+)"):
     """The button on a panel. It keeps working after restarts because its ID holds the panel number."""
 
-    def __init__(self, panel_id: int, label: str = "Open ticket", emoji: str | None = None, color: str = "blue"):
+    def __init__(self, panel_id: int, label: str = "Abrir ticket", emoji: str | None = None, color: str = "blue"):
         super().__init__(
             discord.ui.Button(
                 label=label,
@@ -631,15 +631,15 @@ class OpenTicketButton(discord.ui.DynamicItem[discord.ui.Button], template=r"tox
         try:
             panel = db.get_panel(self.panel_id)
             if panel is None or panel["guild_id"] != interaction.guild_id:
-                raise UserError("This panel no longer exists.")
+                raise UserError("Este painel não existe mais.")
             if db.at_limit(panel, interaction.user.id):
-                raise UserError("You already have the maximum number of open tickets here.")
+                raise UserError("Você já tem o número máximo de tickets abertos aqui.")
             if panel["questions"]:
                 await interaction.response.send_modal(QuestionForm(panel))
                 return
             await interaction.response.defer(ephemeral=True)
             ticket = await open_ticket(interaction.guild, panel, interaction.user)
-            await reply(interaction, f"Your ticket is ready: <#{ticket['channel_id']}>")
+            await reply(interaction, f"Seu ticket foi criado: <#{ticket['channel_id']}>")
         except Exception as error:
             await report_error(interaction, error)
 
@@ -944,6 +944,12 @@ class PanelCommands(app_commands.Group, name="panel", description="Set up ticket
 # Ticket commands
 
 
+def bot_status() -> discord.CustomActivity | None:
+    """The text under the bot's name. Set BOT_STATUS in .env, or leave it blank to show nothing."""
+    text = os.getenv("BOT_STATUS", "Abra um ticket para falar com a equipe").strip()
+    return discord.CustomActivity(name=text[:128]) if text else None
+
+
 class TicketClient(discord.Client):
     def __init__(self):
         intents = discord.Intents.none()
@@ -954,7 +960,7 @@ class TicketClient(discord.Client):
             max_messages=None,
             max_ratelimit_timeout=30,
             allowed_mentions=discord.AllowedMentions(everyone=False, roles=False, users=True),
-            activity=discord.Activity(type=discord.ActivityType.watching, name=os.getenv("BOT_STATUS", "your tickets")),
+            activity=bot_status(),
         )
         self.tree = app_commands.CommandTree(self)
         self.recovered = False
@@ -1021,37 +1027,33 @@ async def on_command_error(interaction: discord.Interaction, error: app_commands
     await report_error(interaction, error)
 
 
-@client.tree.command(description="Show how to set up and use the ticket bot")
+@client.tree.command(description="Veja como usar o bot de tickets")
 @app_commands.guild_only()
 async def help(interaction: discord.Interaction):
-    embed = discord.Embed(title="Ticket bot", color=BRAND_COLOR)
+    embed = discord.Embed(title="Tickets", color=BRAND_COLOR)
     embed.add_field(
-        name="Set up",
-        value=(
-            "1. `/panel create` makes a ticket type\n"
-            "2. `/panel edit` changes its settings\n"
-            "3. `/panel text` changes its messages\n"
-            "4. `/panel send` posts the button"
-        ),
+        name="Como abrir um ticket",
+        value="Clique no botão do painel de tickets. Um canal privado será criado para você falar com a equipe.",
         inline=False,
     )
-    embed.add_field(
-        name="In a ticket",
-        value=(
-            "`/close` `/reopen` `/delete` `/rename`\n"
-            "`/add` `/remove` `/claim` `/transcript`"
-        ),
-        inline=False,
-    )
-    embed.add_field(
-        name="Channel name placeholders",
-        value="`{count}` ticket number, `{user}` member name, `{panel}` panel name",
-        inline=False,
-    )
+    embed.add_field(name="Dentro do ticket", value="Use `/close` ou o botão **Fechar** quando seu problema for resolvido.", inline=False)
+    if interaction.permissions.manage_guild:
+        embed.add_field(
+            name="Setup (moderators)",
+            value=(
+                "1. `/panel create` makes a ticket type\n"
+                "2. `/panel edit` changes its settings\n"
+                "3. `/panel text` changes its messages\n"
+                "4. `/panel send` posts the button\n"
+                "Ticket commands: `/reopen` `/delete` `/rename` `/add` `/remove` `/claim` `/transcript`\n"
+                "Name placeholders: `{count}` number, `{user}` member name, `{panel}` panel name"
+            ),
+            inline=False,
+        )
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-@client.tree.command(description="Close this ticket")
+@client.tree.command(description="Fechar este ticket")
 @app_commands.guild_only()
 async def close(interaction: discord.Interaction):
     ticket, panel = current_ticket(interaction)
@@ -1059,7 +1061,7 @@ async def close(interaction: discord.Interaction):
         require_support(interaction.user, panel)
     await interaction.response.defer(ephemeral=True)
     await close_ticket(interaction.channel, ticket, panel, interaction.user)
-    await reply(interaction, "Ticket closed.")
+    await reply(interaction, "Ticket fechado.")
 
 
 @client.tree.command(description="Reopen this ticket")
