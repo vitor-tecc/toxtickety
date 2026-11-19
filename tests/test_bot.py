@@ -1,3 +1,4 @@
+import asyncio
 import os
 import sys
 import unittest
@@ -321,6 +322,30 @@ class LifecycleTests(Base):
         del self.guild.members[self.owner.id]
         await bot.close_ticket(self.channel(ticket), ticket, self.panel, self.staff)
         self.assertEqual(self.fresh(ticket)["state"], "closed")
+
+
+class RateLimitPatchTests(unittest.IsolatedAsyncioTestCase):
+    async def test_far_reset_with_requests_left_is_allowed(self):
+        from discord.http import Ratelimit
+
+        bucket = Ratelimit(30.0)
+        bucket.limit, bucket.remaining = 5, 2
+        bucket.expires = asyncio.get_running_loop().time() + 86000
+        await bucket.acquire()
+        await bucket.acquire()
+        self.assertEqual(bucket.remaining, 0)
+
+    async def test_real_limit_still_fails_fast(self):
+        from discord.http import Ratelimit
+
+        bucket = Ratelimit(30.0)
+        bucket.limit, bucket.remaining = 5, 0
+        bucket.expires = asyncio.get_running_loop().time() + 86000
+        with self.assertRaises(discord.RateLimited):
+            await bucket.acquire()
+
+    async def test_self_check_passes(self):
+        self.assertTrue(await bot.ratelimit_patch_works())
 
 
 class AccessTests(unittest.TestCase):

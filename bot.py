@@ -42,6 +42,50 @@ class UserError(app_commands.AppCommandError):
 DISCORD_ERRORS = (discord.HTTPException, discord.RateLimited)
 
 
+def patch_ratelimit() -> None:
+    """Works around a discord.py bug, present in 2.7.1.
+
+    With max_ratelimit_timeout set, discord.py refuses a request whenever its rate-limit bucket
+    resets further away than the timeout, without checking whether requests are still left in it.
+    Channel creation uses a bucket that resets after about 24 hours, so after one ticket every
+    further ticket failed locally with "Retry in 8xxxx seconds", although Discord had refused nothing.
+    Here, a request is let through whenever the bucket still has requests left.
+    """
+    from discord.http import Ratelimit
+
+    if getattr(Ratelimit.acquire, "_toxtickety_patched", False):
+        return
+    original = Ratelimit.acquire
+
+    async def acquire(self) -> None:
+        if self.remaining > 0 and not self.is_expired():
+            self._last_request = self._loop.time()
+            self.remaining -= 1
+            self.outgoing += 1
+            return
+        await original(self)
+
+    acquire._toxtickety_patched = True
+    Ratelimit.acquire = acquire
+
+
+async def ratelimit_patch_works() -> bool:
+    """Checks the workaround still fits discord.py's internals, so an upgrade that breaks it is logged."""
+    try:
+        from discord.http import Ratelimit
+
+        bucket = Ratelimit(30.0)
+        bucket.limit, bucket.remaining = 5, 4
+        bucket.expires = asyncio.get_running_loop().time() + 86400
+        await bucket.acquire()
+        return bucket.remaining == 3
+    except Exception:
+        return False
+
+
+patch_ratelimit()
+
+
 def wait_text(seconds: float) -> str:
     if seconds >= 3600:
         hours = round(seconds / 3600)
@@ -916,6 +960,8 @@ class TicketClient(discord.Client):
         self.recovered = False
 
     async def setup_hook(self) -> None:
+        if not await ratelimit_patch_works():
+            log.error("The discord.py rate-limit workaround is not active. Tickets may stop opening after the first one.")
         self.add_view(TicketView())
         self.add_view(ClosedView())
         self.add_dynamic_items(OpenTicketButton)
