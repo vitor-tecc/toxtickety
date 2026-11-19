@@ -214,6 +214,28 @@ class LifecycleTests(Base):
         self.guild.create_error = None
         await bot.open_ticket(self.guild, self.panel, self.owner)
 
+    async def test_rate_limit_frees_the_slot_and_number(self):
+        self.guild.create_error = discord.RateLimited(85864)
+        with self.assertRaises(bot.UserError) as caught:
+            await bot.open_ticket(self.guild, self.panel, self.owner)
+        self.assertIn("24 hours", str(caught.exception))
+        self.assertEqual(bot.db.get_panel(self.panel["id"])["counter"], 0)
+        self.guild.create_error = None
+        ticket = await bot.open_ticket(self.guild, self.panel, self.owner)
+        self.assertEqual(self.channel(ticket).name, "complaint-0001")
+
+    async def test_rate_limited_delete_rolls_back(self):
+        ticket = await bot.open_ticket(self.guild, self.panel, self.owner)
+        channel = self.channel(ticket)
+
+        async def limited(reason=None):
+            raise discord.RateLimited(600)
+
+        channel.delete = limited
+        with self.assertRaises(bot.UserError):
+            await bot.delete_ticket(channel, ticket, self.panel, self.staff)
+        self.assertEqual(self.fresh(ticket)["state"], "open")
+
     async def test_close_reopen_delete(self):
         ticket = await bot.open_ticket(self.guild, self.panel, self.owner)
         channel = self.channel(ticket)

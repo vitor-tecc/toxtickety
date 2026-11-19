@@ -37,6 +37,26 @@ class UserError(app_commands.AppCommandError):
     """A problem to show directly to the person who triggered it."""
 
 
+# discord.py raises RateLimited separately from HTTPException when a wait would be too long,
+# so every place that rolls back after a failed Discord request must catch both.
+DISCORD_ERRORS = (discord.HTTPException, discord.RateLimited)
+
+
+def wait_text(seconds: float) -> str:
+    if seconds >= 3600:
+        hours = round(seconds / 3600)
+        return f"about {hours} hour{'s' if hours != 1 else ''}"
+    minutes = max(1, round(seconds / 60))
+    return f"about {minutes} minute{'s' if minutes != 1 else ''}"
+
+
+def rate_limit_message(error: discord.RateLimited, action: str) -> str:
+    return (
+        f"Discord is temporarily blocking me from {action} on this server. "
+        f"Please try again in {wait_text(error.retry_after)}."
+    )
+
+
 # Text helpers
 
 
@@ -185,7 +205,7 @@ async def write_log(guild: discord.Guild, panel: dict, ticket: dict, title: str,
     embed.add_field(name="By", value=actor.mention)
     try:
         await channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
-    except discord.HTTPException as error:
+    except DISCORD_ERRORS as error:
         log.warning("Could not write to the log channel: %s", error)
 
 
@@ -235,7 +255,7 @@ async def dm_transcript(channel: discord.TextChannel, ticket: dict, data: bytes)
         return
     try:
         await owner.send(f"Here is the transcript of your ticket in **{channel.guild.name}**.", file=transcript_file(channel, data))
-    except discord.HTTPException:
+    except DISCORD_ERRORS:
         log.info("Could not DM a transcript to %s", ticket["owner_id"])
 
 
@@ -269,10 +289,16 @@ async def open_ticket(guild: discord.Guild, panel: dict, owner: discord.Member, 
             overwrites=await ticket_overwrites(guild, panel, ticket, closed=False),
             reason=f"Ticket opened by {owner}",
         )
-    except discord.HTTPException as error:
-        db.drop_ticket(ticket["id"])
+    except discord.RateLimited as error:
+        db.release_ticket(ticket["id"])
+        log.warning("Discord is limiting channel creation for %.0f seconds", error.retry_after)
+        raise UserError(rate_limit_message(error, "creating new ticket channels")) from error
+    except Exception as error:
+        db.release_ticket(ticket["id"])
         log.warning("Could not create a ticket channel: %s", error)
-        raise UserError("I couldn't create the ticket. Check that I have Manage Channels and Manage Roles.") from error
+        if isinstance(error, discord.HTTPException):
+            raise UserError("I couldn't create the ticket. Check that I have Manage Channels and Manage Roles.") from error
+        raise
 
     ticket = db.activate_ticket(ticket["id"], channel.id)
     embed = discord.Embed(description=message_text(panel["welcome_text"], panel, ticket, guild), color=BRAND_COLOR)
@@ -307,8 +333,10 @@ async def close_ticket(channel: discord.TextChannel, ticket: dict, panel: dict, 
         fields["category"] = category
     try:
         await edit_ticket_channel(channel, channel_name(panel["closed_name"], panel, ticket["number"]), **fields)
-    except discord.HTTPException as error:
+    except DISCORD_ERRORS as error:
         db.set_state(ticket["id"], ("closed",), "open")
+        if isinstance(error, discord.RateLimited):
+            raise UserError(rate_limit_message(error, "editing this channel")) from error
         raise UserError("I couldn't close this ticket. Check my channel permissions.") from error
 
     control = await channel.send(
@@ -333,14 +361,16 @@ async def reopen_ticket(channel: discord.TextChannel, ticket: dict, panel: dict,
     name = channel_name(panel["ticket_name"], panel, ticket["number"], owner.name if owner else "user")
     try:
         await edit_ticket_channel(channel, name, **fields)
-    except discord.HTTPException as error:
+    except DISCORD_ERRORS as error:
         db.set_state(ticket["id"], ("open",), "closed")
+        if isinstance(error, discord.RateLimited):
+            raise UserError(rate_limit_message(error, "editing this channel")) from error
         raise UserError("I couldn't reopen this ticket. Check my channel permissions.") from error
 
     if ticket["control_message_id"]:
         try:
             await channel.get_partial_message(ticket["control_message_id"]).delete()
-        except discord.HTTPException:
+        except DISCORD_ERRORS:
             pass
         db.set_control_message(ticket["id"], None)
     await channel.send(
@@ -361,7 +391,7 @@ async def delete_ticket(channel: discord.TextChannel, ticket: dict, panel: dict,
         await save_transcript(channel, panel, ticket, data)
         if panel["dm_transcript"] and previous == "open":
             await dm_transcript(channel, ticket, data)
-    except discord.HTTPException as error:
+    except DISCORD_ERRORS as error:
         log.warning("Could not save the transcript for ticket %s: %s", ticket["id"], error)
     await write_log(channel.guild, panel, ticket, "Ticket deleted", actor, discord.Color.red())
 
@@ -370,8 +400,10 @@ async def delete_ticket(channel: discord.TextChannel, ticket: dict, panel: dict,
         await channel.delete(reason=f"Ticket deleted by {actor}")
     except discord.NotFound:
         pass
-    except discord.HTTPException as error:
+    except DISCORD_ERRORS as error:
         db.set_state(ticket["id"], ("deleting",), previous)
+        if isinstance(error, discord.RateLimited):
+            raise UserError(rate_limit_message(error, "deleting channels")) from error
         raise UserError("I couldn't delete this channel. Check my permissions.") from error
     db.set_state(ticket["id"], ("deleting",), "deleted")
 
@@ -398,6 +430,8 @@ async def report_error(interaction: discord.Interaction, error: Exception) -> No
     original = getattr(error, "original", error)
     if isinstance(original, UserError):
         text = str(original)
+    elif isinstance(original, discord.RateLimited):
+        text = rate_limit_message(original, "doing that")
     elif isinstance(original, discord.Forbidden):
         text = "I'm missing a permission for that. Check my role and channel permissions."
     else:
@@ -408,7 +442,7 @@ async def report_error(interaction: discord.Interaction, error: Exception) -> No
             await interaction.followup.send(text, ephemeral=True)
         else:
             await interaction.response.send_message(text, ephemeral=True)
-    except discord.HTTPException:
+    except DISCORD_ERRORS:
         pass
 
 
@@ -419,7 +453,7 @@ async def reply(interaction: discord.Interaction, text: str) -> None:
             await interaction.followup.send(text, ephemeral=True)
         else:
             await interaction.response.send_message(text, ephemeral=True)
-    except discord.HTTPException:
+    except DISCORD_ERRORS:
         pass
 
 
@@ -887,7 +921,7 @@ class TicketClient(discord.Client):
         self.add_dynamic_items(OpenTicketButton)
         try:
             await self.tree.sync()
-        except discord.HTTPException as error:
+        except DISCORD_ERRORS as error:
             log.warning("Could not update slash commands: %s", error)
 
     async def on_ready(self) -> None:
@@ -923,7 +957,7 @@ class TicketClient(discord.Client):
                 try:
                     await channel.delete(reason="Finishing a ticket deletion")
                     db.set_state(ticket["id"], ("deleting",), "deleted")
-                except discord.HTTPException as error:
+                except DISCORD_ERRORS as error:
                     log.warning("Could not finish deleting ticket %s: %s", ticket["id"], error)
 
     async def on_guild_channel_delete(self, channel: discord.abc.GuildChannel) -> None:
@@ -1029,7 +1063,10 @@ async def add(interaction: discord.Interaction, member: discord.Member):
         raise UserError("They already have access.")
     await interaction.response.defer(ephemeral=True)
     ticket["added_users"].append(member.id)
-    await edit_ticket_channel(interaction.channel, overwrites=await ticket_overwrites(interaction.guild, panel, ticket, closed=False))
+    try:
+        await edit_ticket_channel(interaction.channel, overwrites=await ticket_overwrites(interaction.guild, panel, ticket, closed=False))
+    except discord.RateLimited as error:
+        raise UserError(rate_limit_message(error, "editing this channel")) from error
     db.set_added(ticket["id"], ticket["added_users"])
     await reply(interaction, f"Added {member.mention}.")
 
@@ -1045,10 +1082,13 @@ async def remove(interaction: discord.Interaction, member: discord.Member):
         raise UserError("They weren't added to this ticket.")
     await interaction.response.defer(ephemeral=True)
     ticket["added_users"].remove(member.id)
-    await edit_ticket_channel(
-        interaction.channel,
-        overwrites=await ticket_overwrites(interaction.guild, panel, ticket, closed=ticket["state"] == "closed"),
-    )
+    try:
+        await edit_ticket_channel(
+            interaction.channel,
+            overwrites=await ticket_overwrites(interaction.guild, panel, ticket, closed=ticket["state"] == "closed"),
+        )
+    except discord.RateLimited as error:
+        raise UserError(rate_limit_message(error, "editing this channel")) from error
     db.set_added(ticket["id"], ticket["added_users"])
     await reply(interaction, f"Removed {member.mention}.")
 

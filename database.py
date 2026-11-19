@@ -169,6 +169,17 @@ class Database:
             self.conn.execute("UPDATE tickets SET channel_id = ?, state = 'open' WHERE id = ?", (channel_id, ticket_id))
         return self.get_ticket(ticket_id)
 
+    def release_ticket(self, ticket_id: int) -> None:
+        """Undoes a reservation whose channel was never made, giving its number back if it was the latest."""
+        with self.conn:
+            row = self.conn.execute("SELECT panel_id, number FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
+            if row is None:
+                return
+            self.conn.execute("DELETE FROM tickets WHERE id = ?", (ticket_id,))
+            self.conn.execute(
+                "UPDATE panels SET counter = counter - 1 WHERE id = ? AND counter = ?", (row["panel_id"], row["number"])
+            )
+
     def drop_ticket(self, ticket_id: int) -> None:
         with self.conn:
             self.conn.execute("DELETE FROM tickets WHERE id = ?", (ticket_id,))
