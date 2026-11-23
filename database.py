@@ -80,6 +80,19 @@ class Database:
                 closed_at INTEGER
             );
             CREATE INDEX IF NOT EXISTS tickets_owner ON tickets (panel_id, owner_id, state);
+            CREATE TABLE IF NOT EXISTS team_forums (
+                guild_id INTEGER PRIMARY KEY,
+                forum_id INTEGER NOT NULL,
+                since INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS teams (
+                thread_id INTEGER PRIMARY KEY,
+                guild_id INTEGER NOT NULL,
+                owner_id INTEGER NOT NULL,
+                state TEXT NOT NULL,
+                role_id INTEGER,
+                message_id INTEGER UNIQUE
+            );
             """
         )
         self.conn.commit()
@@ -234,3 +247,66 @@ class Database:
     def set_control_message(self, ticket_id: int, message_id: int | None) -> None:
         with self.conn:
             self.conn.execute("UPDATE tickets SET control_message_id = ? WHERE id = ?", (message_id, ticket_id))
+
+    # Team roles
+
+    def set_team_forum(self, guild_id: int, forum_id: int | None, since: int) -> None:
+        with self.conn:
+            if forum_id is None:
+                self.conn.execute("DELETE FROM team_forums WHERE guild_id = ?", (guild_id,))
+            else:
+                self.conn.execute(
+                    """INSERT INTO team_forums (guild_id, forum_id, since) VALUES (?, ?, ?)
+                       ON CONFLICT (guild_id) DO UPDATE SET forum_id = excluded.forum_id, since = excluded.since""",
+                    (guild_id, forum_id, since),
+                )
+
+    def team_forum(self, guild_id: int) -> dict | None:
+        row = self.conn.execute("SELECT * FROM team_forums WHERE guild_id = ?", (guild_id,)).fetchone()
+        return dict(row) if row else None
+
+    def team_forums(self) -> list[dict]:
+        return [dict(row) for row in self.conn.execute("SELECT * FROM team_forums").fetchall()]
+
+    def add_team(self, guild_id: int, thread_id: int, owner_id: int) -> bool:
+        with self.conn:
+            cursor = self.conn.execute(
+                "INSERT OR IGNORE INTO teams (thread_id, guild_id, owner_id, state) VALUES (?, ?, ?, 'waiting')",
+                (thread_id, guild_id, owner_id),
+            )
+        return cursor.rowcount > 0
+
+    def get_team(self, thread_id: int) -> dict | None:
+        row = self.conn.execute("SELECT * FROM teams WHERE thread_id = ?", (thread_id,)).fetchone()
+        return dict(row) if row else None
+
+    def team_by_message(self, message_id: int) -> dict | None:
+        row = self.conn.execute("SELECT * FROM teams WHERE message_id = ?", (message_id,)).fetchone()
+        return dict(row) if row else None
+
+    def all_teams(self) -> list[dict]:
+        return [dict(row) for row in self.conn.execute("SELECT * FROM teams").fetchall()]
+
+    def count_teams(self, guild_id: int) -> int:
+        return self.conn.execute(
+            "SELECT COUNT(*) FROM teams WHERE guild_id = ? AND state = 'done'", (guild_id,)
+        ).fetchone()[0]
+
+    def set_team_state(self, thread_id: int, from_state: str, to_state: str) -> bool:
+        """Changes state only from the expected one, so two quick replies cannot create two roles."""
+        with self.conn:
+            cursor = self.conn.execute(
+                "UPDATE teams SET state = ? WHERE thread_id = ? AND state = ?", (to_state, thread_id, from_state)
+            )
+        return cursor.rowcount > 0
+
+    def finish_team(self, thread_id: int, role_id: int, message_id: int) -> None:
+        with self.conn:
+            self.conn.execute(
+                "UPDATE teams SET state = 'done', role_id = ?, message_id = ? WHERE thread_id = ?",
+                (role_id, message_id, thread_id),
+            )
+
+    def delete_team(self, thread_id: int) -> None:
+        with self.conn:
+            self.conn.execute("DELETE FROM teams WHERE thread_id = ?", (thread_id,))

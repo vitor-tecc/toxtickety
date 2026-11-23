@@ -367,7 +367,7 @@ class CommandTests(unittest.TestCase):
     def test_slash_commands_are_valid(self):
         commands = [command.to_dict(bot.client.tree) for command in bot.client.tree.get_commands()]
         names = {command["name"] for command in commands}
-        self.assertEqual(names, {"panel", "help", "close", "reopen", "delete", "rename", "add", "remove", "claim", "transcript"})
+        self.assertEqual(names, {"panel", "teams", "help", "close", "reopen", "delete", "rename", "add", "remove", "claim", "transcript"})
         panel = next(command for command in commands if command["name"] == "panel")
         self.assertEqual(int(panel["default_member_permissions"]), discord.Permissions(manage_guild=True).value)
         for sub in panel["options"]:

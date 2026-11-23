@@ -14,6 +14,7 @@ import discord
 from discord import app_commands
 from dotenv import load_dotenv
 
+import teams
 from database import Database, LimitReached
 from transcript import render_transcript
 
@@ -941,6 +942,49 @@ class PanelCommands(app_commands.Group, name="panel", description="Set up ticket
         await interaction.response.send_message("Panel deleted.", ephemeral=True)
 
 
+@app_commands.default_permissions(manage_guild=True)
+@app_commands.guild_only()
+class TeamCommands(app_commands.Group, name="teams", description="Set up team roles from a forum"):
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if not interaction.user.guild_permissions.manage_guild:
+            raise UserError("You need the Manage Server permission to set up team roles.")
+        return True
+
+    @app_commands.command(description="Choose the forum where new posts get a team role")
+    @app_commands.describe(forum="Forum to watch. Only posts made from now on are handled")
+    async def forum(self, interaction: discord.Interaction, forum: discord.ForumChannel):
+        db.set_team_forum(interaction.guild_id, forum.id, teams.now())
+        mine = forum.permissions_for(interaction.guild.me)
+        needed = {
+            "View Channel": mine.view_channel,
+            "Send Messages in Threads": mine.send_messages_in_threads,
+            "Add Reactions": mine.add_reactions,
+            "Read Message History": mine.read_message_history,
+            "Manage Roles": interaction.guild.me.guild_permissions.manage_roles,
+        }
+        missing = [name for name, ok in needed.items() if not ok]
+        text = f"New posts in {forum.mention} will now get a team role."
+        if missing:
+            text += f"\nI'm missing these permissions there, so it won't work yet: {', '.join(missing)}."
+        await interaction.response.send_message(text, ephemeral=True)
+
+    @app_commands.command(description="Show the team forum")
+    async def view(self, interaction: discord.Interaction):
+        setting = db.team_forum(interaction.guild_id)
+        if setting is None:
+            text = "Team roles are off. Use `/teams forum` to choose a forum."
+        else:
+            text = f"Team forum: <#{setting['forum_id']}>. Team roles created: {db.count_teams(interaction.guild_id)}."
+        await interaction.response.send_message(text, ephemeral=True)
+
+    @app_commands.command(description="Stop creating team roles for new posts")
+    async def off(self, interaction: discord.Interaction):
+        db.set_team_forum(interaction.guild_id, None, teams.now())
+        await interaction.response.send_message(
+            "Team roles are off for new posts. Existing team roles keep working.", ephemeral=True
+        )
+
+
 # Ticket commands
 
 
@@ -954,7 +998,9 @@ class TicketClient(discord.Client):
     def __init__(self):
         intents = discord.Intents.none()
         intents.guilds = True
-        intents.message_content = True  # Needed to read messages for transcripts.
+        intents.guild_messages = True  # Team posts: read the owner's reply with the name and color.
+        intents.guild_reactions = True  # Team posts: give or remove the role when someone reacts.
+        intents.message_content = True  # Needed to read messages for transcripts and team posts.
         super().__init__(
             intents=intents,
             max_messages=None,
@@ -985,6 +1031,7 @@ class TicketClient(discord.Client):
             attach_files=True,
             add_reactions=True,
             read_message_history=True,
+            send_messages_in_threads=True,
             manage_channels=True,
             manage_roles=True,
             manage_messages=True,
@@ -993,6 +1040,13 @@ class TicketClient(discord.Client):
         if not self.recovered:
             self.recovered = True
             await self.recover()
+            self.loop.create_task(self.recover_teams())
+
+    async def recover_teams(self) -> None:
+        try:
+            await teams.recover(self, db)
+        except Exception:
+            log.exception("Could not catch up on team posts")
 
     async def recover(self) -> None:
         """Tidies up anything left unfinished by a restart."""
@@ -1017,9 +1071,30 @@ class TicketClient(discord.Client):
         if ticket:
             db.set_state(ticket["id"], ("open", "closed", "deleting"), "deleted")
 
+    # Team posts
+
+    async def on_thread_create(self, thread: discord.Thread) -> None:
+        setting = db.team_forum(thread.guild.id)
+        if setting and thread.parent_id == setting["forum_id"]:
+            await teams.start_team(db, thread)
+
+    async def on_message(self, message: discord.Message) -> None:
+        if message.guild is not None and not message.author.bot and isinstance(message.channel, discord.Thread):
+            await teams.handle_message(self, db, message)
+
+    async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent) -> None:
+        await teams.handle_reaction(self, db, payload, added=True)
+
+    async def on_raw_reaction_remove(self, payload: discord.RawReactionActionEvent) -> None:
+        await teams.handle_reaction(self, db, payload, added=False)
+
+    async def on_raw_thread_delete(self, payload: discord.RawThreadDeleteEvent) -> None:
+        await teams.handle_thread_deleted(self, db, payload.guild_id, payload.thread_id)
+
 
 client = TicketClient()
 client.tree.add_command(PanelCommands())
+client.tree.add_command(TeamCommands())
 
 
 @client.tree.error
