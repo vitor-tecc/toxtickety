@@ -167,6 +167,18 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
         await teams.handle_message(self.client, self.db, FakeMessage(self.thread, OTHER_ID, "Outro #123456"))
         self.assertEqual(self.guild.roles, [])
 
+    async def test_post_text_is_not_treated_as_the_answer(self):
+        await self.started()
+        starter = FakeMessage(self.thread, OWNER_ID, "bla bla bla", message_id=self.thread.id)
+        await teams.handle_message(self.client, self.db, starter)
+        self.assertEqual((starter.replies, self.guild.roles), ([], []))
+        self.assertEqual(self.db.get_team(self.thread.id)["state"], "waiting")
+
+    async def test_example_from_the_question_works(self):
+        name, colour = teams.parse_team("ICEGURT E.C. #305aff")
+        self.assertEqual((name, colour.value), ("ICEGURT E.C.", 0x305AFF))
+        self.assertIn("ICEGURT E.C. #305aff", teams.PROMPT)
+
     async def test_bad_answer_gets_help(self):
         await self.started()
         message = FakeMessage(self.thread, OWNER_ID, "Os Brabos")

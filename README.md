@@ -73,7 +73,7 @@ Members can now press the button to open `complaint-0001`, `complaint-0002` and 
 ## Team roles
 
 When someone creates a post in the team forum, the bot asks them for the team's name and color,
-such as `Os Brabos #FF5733`. It then creates a role with no permissions and posts a message with a ✅
+such as `ICEGURT E.C. #305aff`. The post's own text is ignored. It then creates a role with no permissions and posts a message with a ✅
 reaction. Anyone who reacts gets the role, and removing the reaction takes it away. Deleting the post
 deletes the role.
 

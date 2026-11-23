@@ -18,10 +18,10 @@ DISCORD_ERRORS = (discord.HTTPException, discord.RateLimited)
 
 PROMPT = (
     "{owner} Para criar o cargo do seu time, envie **o nome e a cor em hexadecimal** na mesma mensagem.\n"
-    "Exemplo: `Os Brabos #FF5733`\n"
+    "Exemplo: `ICEGURT E.C. #305aff`\n"
     "Para escolher a cor, pesquise **color picker** no Google."
 )
-NOT_UNDERSTOOD = "Não entendi. Envie o nome e a cor juntos, por exemplo: `Os Brabos #FF5733`."
+NOT_UNDERSTOOD = "Não entendi. Envie o nome e a cor juntos, por exemplo: `ICEGURT E.C. #305aff`."
 NAME_TOO_LONG = f"O nome do time pode ter no máximo {MAX_ROLE_NAME} caracteres."
 ROLE_LIMIT = "Este servidor atingiu o limite de 250 cargos do Discord. Avise a moderação."
 NO_PERMISSION = "Não consegui criar o cargo. Avise a moderação."
@@ -89,6 +89,9 @@ async def start_team(db, thread: discord.Thread) -> None:
 
 async def handle_message(client: discord.Client, db, message: discord.Message) -> None:
     """Turns the post owner's reply into a role and a reaction message, then goes quiet."""
+    # A forum post's own text is a message whose ID matches the post's ID. It isn't the answer.
+    if message.id == message.channel.id:
+        return
     team = db.get_team(message.channel.id)
     if team is None or team["state"] != "waiting" or message.author.id != team["owner_id"]:
         return
