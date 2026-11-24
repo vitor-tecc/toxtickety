@@ -37,6 +37,11 @@ class FakeHTTP:
     async def delete_role(self, guild_id, role_id, reason=None):
         self.calls.append(("delete", role_id))
 
+    async def move_role_position(self, guild_id, payload, reason=None):
+        if getattr(self, "move_error", None):
+            raise self.move_error
+        self.calls.append(("move", payload))
+
 
 class FakeMessage:
     def __init__(self, channel, author_id, content, message_id=None):
@@ -78,19 +83,33 @@ class FakeThread:
         return message
 
 
+def listed(role_id, position):
+    return SimpleNamespace(id=role_id, position=position, is_default=lambda: role_id == GUILD_ID)
+
+
 class FakeGuild:
     def __init__(self):
         self.id = GUILD_ID
         self.roles = []
         self.role_error = None
+        self.member_role = SimpleNamespace(id=555, position=3)
 
     def get_member(self, user_id):
         return None
 
+    def get_role(self, role_id):
+        return self.member_role if role_id == self.member_role.id else None
+
+    async def fetch_roles(self):
+        # @everyone, the new team role at the bottom, another role, Membro, and a staff role above it.
+        new_id = self.roles[-1].id
+        return [listed(GUILD_ID, 0), listed(new_id, 1), listed(444, 2), listed(555, 3), listed(666, 4)]
+
     async def create_role(self, **kwargs):
         if self.role_error:
             raise self.role_error
-        role = SimpleNamespace(id=700 + len(self.roles), mention=f"<@&{700 + len(self.roles)}>", **kwargs)
+        role_id = 700 + len(self.roles)
+        role = SimpleNamespace(id=role_id, mention=f"<@&{role_id}>", **kwargs)
         self.roles.append(role)
         return role
 
@@ -175,9 +194,10 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.db.get_team(self.thread.id)["state"], "waiting")
 
     async def test_example_from_the_question_works(self):
-        name, colour = teams.parse_team("ICEGURT E.C. #305aff")
-        self.assertEqual((name, colour.value), ("ICEGURT E.C.", 0x305AFF))
-        self.assertIn("ICEGURT E.C. #305aff", teams.PROMPT)
+        name, colour = teams.parse_team("[ICEG] ICEGURT E.C. #305aff")
+        self.assertEqual((name, colour.value), ("[ICEG] ICEGURT E.C.", 0x305AFF))
+        self.assertIn("a tag, o nome e a cor", teams.PROMPT)
+        self.assertIn("[ICEG] ICEGURT E.C. #305aff", teams.PROMPT)
 
     async def test_bad_answer_gets_help(self):
         await self.started()
@@ -199,6 +219,30 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
         later = FakeMessage(self.thread, OWNER_ID, "Outro nome #000000")
         await teams.handle_message(self.client, self.db, later)
         self.assertEqual((len(self.thread.sent), later.replies, len(self.guild.roles)), (sent, [], 1))
+
+    async def test_role_goes_above_the_chosen_role(self):
+        self.db.set_team_above(GUILD_ID, self.guild.member_role.id)
+        await self.finished()
+        team_id = self.guild.roles[0].id
+        moves = [call[1] for call in self.http.calls if call[0] == "move"]
+        self.assertEqual(moves, [[{"id": 444, "position": 1}, {"id": 555, "position": 2}, {"id": team_id, "position": 3}]])
+
+    async def test_role_stays_at_the_bottom_without_a_setting(self):
+        await self.finished()
+        self.assertFalse([call for call in self.http.calls if call[0] == "move"])
+
+    async def test_failed_move_still_finishes(self):
+        self.db.set_team_above(GUILD_ID, self.guild.member_role.id)
+        self.http.move_error = http_error(50013, 403)
+        team = await self.finished()
+        self.assertEqual(team["state"], "done")
+
+    async def test_above_setting_survives_forum_change_and_needs_a_forum(self):
+        self.db.set_team_above(GUILD_ID, 555)
+        self.db.set_team_forum(GUILD_ID, 42, 9)
+        self.assertEqual(self.db.team_forum(GUILD_ID)["above_role_id"], 555)
+        self.db.set_team_forum(GUILD_ID, None, 0)
+        self.assertFalse(self.db.set_team_above(GUILD_ID, 555))
 
     async def test_role_limit_is_explained(self):
         await self.started()

@@ -17,11 +17,11 @@ STARTER_WAIT_SECONDS = 2
 DISCORD_ERRORS = (discord.HTTPException, discord.RateLimited)
 
 PROMPT = (
-    "{owner} Para criar o cargo do seu time, envie **o nome e a cor em hexadecimal** na mesma mensagem.\n"
-    "Exemplo: `ICEGURT E.C. #305aff`\n"
+    "{owner} Para criar o cargo do seu time, envie **a tag, o nome e a cor em hexadecimal** na mesma mensagem.\n"
+    "Exemplo: `[ICEG] ICEGURT E.C. #305aff`\n"
     "Para escolher a cor, pesquise **color picker** no Google."
 )
-NOT_UNDERSTOOD = "Não entendi. Envie o nome e a cor juntos, por exemplo: `ICEGURT E.C. #305aff`."
+NOT_UNDERSTOOD = "Não entendi. Envie a tag, o nome e a cor juntos, por exemplo: `[ICEG] ICEGURT E.C. #305aff`."
 NAME_TOO_LONG = f"O nome do time pode ter no máximo {MAX_ROLE_NAME} caracteres."
 ROLE_LIMIT = "Este servidor atingiu o limite de 250 cargos do Discord. Avise a moderação."
 NO_PERMISSION = "Não consegui criar o cargo. Avise a moderação."
@@ -125,6 +125,8 @@ async def handle_message(client: discord.Client, db, message: discord.Message) -
         log.warning("Could not create a team role: %s", error)
         return
 
+    await place_role(client, db, guild, role.id)
+
     try:
         notice = await message.channel.send(
             REACTION_MESSAGE.format(emoji=REACTION, role=role.mention),
@@ -137,6 +139,41 @@ async def handle_message(client: discord.Client, db, message: discord.Message) -
         db.set_team_state(team["thread_id"], "creating", "waiting")
         return
     db.finish_team(team["thread_id"], role.id, notice.id)
+
+
+async def place_role(client: discord.Client, db, guild: discord.Guild, role_id: int) -> None:
+    """Moves a new team role just above the chosen role, so its color shows in members' names.
+
+    Discord shows the color of a member's highest colored role, and new roles start at the bottom.
+    Positions are read fresh from Discord, because the cached ones can lag right after a role is
+    created. If the move fails, the role still works, it just sits lower in the list.
+    """
+    setting = db.team_forum(guild.id)
+    anchor_id = setting.get("above_role_id") if setting else None
+    if not anchor_id:
+        return
+    try:
+        roles = sorted((r for r in await guild.fetch_roles() if not r.is_default()), key=lambda r: (r.position, r.id))
+        ids = [r.id for r in roles]
+        if role_id not in ids or anchor_id not in ids:
+            return
+        old_index = ids.index(role_id)
+        ids.remove(role_id)
+        new_index = ids.index(anchor_id) + 1
+        ids.insert(new_index, role_id)
+        low, high = min(old_index, new_index), max(old_index, new_index)
+        # Only the roles between the old and new spot change, and all of them sit below the anchor,
+        # which the bot is allowed to manage.
+        payload = [{"id": ids[index], "position": index + 1} for index in range(low, high + 1)]
+        if len(payload) > 1:
+            await client.http.move_role_position(guild.id, payload, reason="Place team role above the chosen role")
+    except DISCORD_ERRORS as error:
+        log.warning("Could not move team role %s above %s: %s", role_id, anchor_id, error)
+
+
+def can_place_above(guild: discord.Guild, anchor: discord.Role) -> bool:
+    """The bot can only place roles below its own highest role."""
+    return anchor.position < guild.me.top_role.position and guild.me.guild_permissions.manage_roles
 
 
 async def reply(message: discord.Message, text: str) -> None:

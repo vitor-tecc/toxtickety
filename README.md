@@ -73,13 +73,14 @@ Members can now press the button to open `complaint-0001`, `complaint-0002` and 
 ## Team roles
 
 When someone creates a post in the team forum, the bot asks them for the team's name and color,
-such as `ICEGURT E.C. #305aff`. The post's own text is ignored. It then creates a role with no permissions and posts a message with a ✅
+such as `[ICEG] ICEGURT E.C. #305aff`. The post's own text is ignored. It then creates a role with no permissions and posts a message with a ✅
 reaction. Anyone who reacts gets the role, and removing the reaction takes it away. Deleting the post
 deletes the role.
 
 | Command | What it does |
 | --- | --- |
 | `/teams forum` | Choose the forum to watch, or switch to another one |
+| `/teams above` | Place new team roles directly above a role, such as `@Membro`, so their color shows |
 | `/teams view` | Show the current forum and how many team roles exist |
 | `/teams off` | Stop handling new posts. Existing team roles keep working |
 

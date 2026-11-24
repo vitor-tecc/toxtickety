@@ -968,14 +968,34 @@ class TeamCommands(app_commands.Group, name="teams", description="Set up team ro
             text += f"\nI'm missing these permissions there, so it won't work yet: {', '.join(missing)}."
         await interaction.response.send_message(text, ephemeral=True)
 
+    @app_commands.command(description="Place new team roles above this role, so their color shows")
+    @app_commands.describe(role="New team roles go directly above this role, for example @Membro")
+    async def above(self, interaction: discord.Interaction, role: discord.Role):
+        if role.is_default():
+            raise UserError("Choose a role other than @everyone.")
+        if not db.set_team_above(interaction.guild_id, role.id):
+            raise UserError("Choose a team forum with `/teams forum` first.")
+        text = f"New team roles will go directly above {role.mention}."
+        if not teams.can_place_above(interaction.guild, role):
+            text += (
+                f"\nMy highest role must be above {role.mention} for this to work. "
+                "Drag my role higher in Server Settings > Roles."
+            )
+        await interaction.response.send_message(text, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+
     @app_commands.command(description="Show the team forum")
     async def view(self, interaction: discord.Interaction):
         setting = db.team_forum(interaction.guild_id)
         if setting is None:
             text = "Team roles are off. Use `/teams forum` to choose a forum."
         else:
-            text = f"Team forum: <#{setting['forum_id']}>. Team roles created: {db.count_teams(interaction.guild_id)}."
-        await interaction.response.send_message(text, ephemeral=True)
+            above = f"<@&{setting['above_role_id']}>" if setting.get("above_role_id") else "the bottom of the role list"
+            text = (
+                f"Team forum: <#{setting['forum_id']}>.\n"
+                f"New team roles go above: {above}.\n"
+                f"Team roles created: {db.count_teams(interaction.guild_id)}."
+            )
+        await interaction.response.send_message(text, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
 
     @app_commands.command(description="Stop creating team roles for new posts")
     async def off(self, interaction: discord.Interaction):

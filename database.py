@@ -95,6 +95,9 @@ class Database:
             );
             """
         )
+        columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(team_forums)")}
+        if "above_role_id" not in columns:
+            self.conn.execute("ALTER TABLE team_forums ADD COLUMN above_role_id INTEGER")
         self.conn.commit()
 
     # Panels
@@ -260,6 +263,12 @@ class Database:
                        ON CONFLICT (guild_id) DO UPDATE SET forum_id = excluded.forum_id, since = excluded.since""",
                     (guild_id, forum_id, since),
                 )
+
+    def set_team_above(self, guild_id: int, role_id: int | None) -> bool:
+        """Sets the role that new team roles go above. False when no team forum is set yet."""
+        with self.conn:
+            cursor = self.conn.execute("UPDATE team_forums SET above_role_id = ? WHERE guild_id = ?", (role_id, guild_id))
+        return cursor.rowcount > 0
 
     def team_forum(self, guild_id: int) -> dict | None:
         row = self.conn.execute("SELECT * FROM team_forums WHERE guild_id = ?", (guild_id,)).fetchone()
